@@ -37,6 +37,7 @@ _ROUTES: list[Route] = [
     ("GET", re.compile(r"^/api/config$"), "config"),
     ("GET", re.compile(r"^/api/fonts$"), "list_fonts"),
     ("POST", re.compile(r"^/api/fonts$"), "upload_font"),
+    ("GET", re.compile(r"^/api/fonts/(?P<font_id>[A-Za-z0-9_.-]+)/file$"), "font_file"),
     ("DELETE", re.compile(r"^/api/fonts/(?P<font_id>[A-Za-z0-9_.-]+)$"), "delete_font"),
     ("GET", re.compile(r"^/api/presets$"), "list_presets"),
     ("POST", re.compile(r"^/api/presets$"), "save_preset"),
@@ -167,6 +168,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"font": record, "fonts": self.service.list_fonts()}, 201)
                 return
         raise ValidationError("No font file was included in that upload.")
+
+    def api_font_file(self, font_id: str) -> None:
+        self._send_file(self.service.font_file(font_id), download_name=None)
 
     def api_delete_font(self, font_id: str) -> None:
         self.service.delete_font(font_id)

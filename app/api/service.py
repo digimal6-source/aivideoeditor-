@@ -137,6 +137,13 @@ class AppService:
         self.fonts.scan()
         return self.fonts.list_fonts()
 
+    def font_file(self, font_id: str) -> Path:
+        """Serve a font file so the browser preview can use the real typeface."""
+        record = self.fonts.get(font_id)
+        if record is None or not record.path.is_file():
+            raise NotFoundError("That font is not installed.")
+        return record.path
+
     def delete_font(self, font_id: str) -> None:
         if not self.fonts.delete(font_id):
             raise NotFoundError("That font is not installed.")
