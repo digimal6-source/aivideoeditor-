@@ -1,0 +1,19 @@
+# Optional: local speech-to-text.
+#
+# The app runs without this. When faster-whisper is missing, the caption source
+# dropdown falls back to "Paste transcript manually", which produces real,
+# timed captions from text you supply. Install this to have captions generated
+# from the audio automatically.
+#
+#   pip install -r requirements-optional.txt
+#
+# CPU-only by design: no CUDA packages are pinned, and the default model size
+# (WHISPER_MODEL_SIZE=base) is chosen to be usable on a 2-core Codespace.
+#
+# Model size tradeoff (set WHISPER_MODEL_SIZE in .env):
+#   tiny   ~75 MB   fastest, noticeably weaker on names and jargon
+#   base   ~145 MB  balanced - the default
+#   small  ~480 MB  clearly better accuracy, roughly 2-3x slower than base
+#   medium ~1.5 GB  best of the CPU-practical sizes, slow on 2 cores
+
+faster-whisper>=1.0.0
