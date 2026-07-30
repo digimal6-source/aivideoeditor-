@@ -77,9 +77,26 @@ class PartStream(io.RawIOBase):
         return True
 
     def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+        """Read from the part body.
+
+        A negative ``size`` follows the ``RawIOBase`` contract and reads the
+        whole remaining part, not just the next internal chunk.
+        """
+        if size is None or size < 0:
+            chunks: list[bytes] = []
+            while not self._done:
+                chunk = self._read_chunk(_CHUNK)
+                if chunk:
+                    chunks.append(chunk)
+                elif self._source.remaining <= 0:
+                    break
+            return b"".join(chunks)
+        return self._read_chunk(size)
+
+    def _read_chunk(self, size: int) -> bytes:
         if self._done:
             return b""
-        want = _CHUNK if size is None or size < 0 else size
+        want = max(0, size)
         if want == 0:
             return b""
         source = self._source
