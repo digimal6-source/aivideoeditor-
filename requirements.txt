@@ -1,0 +1,14 @@
+# Core runtime dependencies.
+#
+# The HTTP API and all configuration/validation code run on the Python standard
+# library alone - there is deliberately no web framework to install, so the app
+# starts in a fresh Codespace in seconds.
+#
+# These two are needed by the render pipeline:
+Pillow>=10.0.0        # hook text layer rendering (transparent PNG overlay)
+fonttools>=4.40.0     # reads a font's internal family name; validates uploads
+
+# Local, free, open-source speech-to-text. CPU-only by default.
+# Pulls in ctranslate2 + tokenizers + onnxruntime (all free/OSS, ~200 MB).
+# If you only ever use TRANSCRIPTION_BACKEND=manual or =none you can skip it.
+faster-whisper>=1.0.0

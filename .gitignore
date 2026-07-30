@@ -1,0 +1,53 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node -------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+
+# --- Secrets ----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Runtime data (uploads, renders, temp jobs, models) ---------------------
+data/
+uploads/
+outputs/
+jobs/
+models/
+*.log
+
+# --- Media (never commit source or rendered video) --------------------------
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.m4v
+*.avi
+*.wav
+*.mp3
+*.m4a
+!tests/fixtures/.gitkeep
+
+# --- Fonts: user-supplied font files are not redistributable ----------------
+fonts/*
+!fonts/README.md
+!fonts/.gitkeep
+
+# --- OS / editors -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

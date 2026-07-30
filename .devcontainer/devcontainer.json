@@ -1,0 +1,36 @@
+{
+  "name": "Shortform Clipper",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "upgradePackages": true
+    }
+  },
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "echo 'Ready. Run: ./scripts/dev.sh'",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Shortform Clipper",
+      "onAutoForward": "notify",
+      "visibility": "private"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  },
+  "remoteEnv": {
+    "PYTHONUNBUFFERED": "1"
+  }
+}
