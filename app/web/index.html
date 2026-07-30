@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Clipforge</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Clipforge</span>
+    </div>
+    <div class="topbar-right">
+      <span id="health" class="pill pill-muted">checking…</span>
+      <button type="button" class="ghost-btn" id="preview-toggle" aria-expanded="false">Preview</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <div class="columns">
+
+    <!-- ============ CONTROLS ============ -->
+    <div class="controls">
+
+      <!-- 1. VIDEO -->
+      <section class="card" open-section>
+        <h2 class="card-title"><span class="step">1</span> Video</h2>
+
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept="video/*,.mp4,.mov,.mkv,.webm,.m4v,.avi" hidden>
+          <span class="dropzone-title">Upload long-form video</span>
+          <span class="dropzone-hint" id="dropzone-hint">MP4, MOV, MKV or WebM</span>
+        </label>
+
+        <div class="progress-wrap hidden" id="upload-progress-wrap">
+          <div class="progress"><div class="progress-bar" id="upload-bar"></div></div>
+          <div class="progress-label" id="upload-label">Uploading…</div>
+        </div>
+
+        <div class="meta-panel hidden" id="meta-panel">
+          <div class="meta-row"><span>File</span><b id="meta-name">–</b></div>
+          <div class="meta-row"><span>Size</span><b id="meta-size">–</b></div>
+          <div class="meta-row"><span>Duration</span><b id="meta-duration">–</b></div>
+          <div class="meta-row"><span>Resolution</span><b id="meta-resolution">–</b></div>
+          <div class="meta-row"><span>Source FPS</span><b id="meta-fps">–</b></div>
+          <div class="meta-row"><span>Audio</span><b id="meta-audio">–</b></div>
+        </div>
+      </section>
+
+      <!-- 2. CLIP SELECTION -->
+      <section class="card">
+        <h2 class="card-title"><span class="step">2</span> Clip selection</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label for="clip-start">Start</label>
+            <input type="text" id="clip-start" value="0:00" inputmode="numeric" placeholder="MM:SS">
+          </div>
+          <div class="field">
+            <label for="clip-end">End</label>
+            <input type="text" id="clip-end" value="0:30" inputmode="numeric" placeholder="MM:SS">
+          </div>
+        </div>
+        <p class="hint">Accepts <code>HH:MM:SS</code>, <code>MM:SS</code> or plain seconds.</p>
+        <div class="inline-error hidden" id="clip-error"></div>
+      </section>
+
+      <!-- 3. HOOK -->
+      <section class="card">
+        <h2 class="card-title"><span class="step">3</span> On-screen hook</h2>
+
+        <div class="field">
+          <label for="hook-text">Hook text</label>
+          <textarea id="hook-text" rows="2" placeholder="Hiring Is Now The SLOWEST Way To Ship"></textarea>
+        </div>
+
+        <div class="field">
+          <label>Tap words to highlight</label>
+          <div class="word-chips" id="hook-words"><span class="empty-note">Type a hook above.</span></div>
+        </div>
+
+        <div class="field">
+          <label>Highlight colour</label>
+          <div class="swatches" id="color-swatches"></div>
+          <div class="custom-color">
+            <input type="color" id="color-picker" value="#8B5CF6" aria-label="Colour picker">
+            <input type="text" id="color-hex" value="#8B5CF6" spellcheck="false" aria-label="Custom HEX">
+            <span class="chip-name" id="color-name">Electric Violet</span>
+          </div>
+          <div class="inline-error hidden" id="color-error"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="hook-font">Hook font</label>
+            <select id="hook-font"></select>
+          </div>
+          <div class="field">
+            <label for="hook-size">Size <span class="val" id="hook-size-val">74</span></label>
+            <input type="range" id="hook-size" min="36" max="130" step="2" value="74">
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="hook-align">Alignment</label>
+            <select id="hook-align">
+              <option value="center" selected>Center</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="hook-gap">Gap above square <span class="val" id="hook-gap-val">60</span></label>
+            <input type="range" id="hook-gap" min="0" max="260" step="5" value="60">
+          </div>
+        </div>
+
+        <label class="switch">
+          <input type="checkbox" id="hook-enabled" checked>
+          <span>Render the hook</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="hook-upper">
+          <span>Force uppercase</span>
+        </label>
+      </section>
+
+      <!-- 4. CAPTIONS -->
+      <section class="card">
+        <h2 class="card-title"><span class="step">4</span> Captions</h2>
+
+        <label class="switch">
+          <input type="checkbox" id="cap-enabled" checked>
+          <span>Burn in captions</span>
+        </label>
+
+        <div class="field">
+          <label for="cap-backend">Transcription source</label>
+          <select id="cap-backend"></select>
+          <p class="hint" id="cap-backend-hint"></p>
+        </div>
+
+        <div class="field hidden" id="manual-text-field">
+          <label for="cap-manual">Transcript text</label>
+          <textarea id="cap-manual" rows="3" placeholder="Paste the spoken words for this clip."></textarea>
+          <p class="hint">Timings are spread evenly across the clip by word length.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="cap-font">Caption font</label>
+            <select id="cap-font"></select>
+          </div>
+          <div class="field">
+            <label for="cap-maxwords">Max words / phrase <span class="val" id="cap-maxwords-val">3</span></label>
+            <input type="range" id="cap-maxwords" min="1" max="8" step="1" value="3">
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="cap-size">Font size <span class="val" id="cap-size-val">62</span></label>
+            <input type="range" id="cap-size" min="28" max="120" step="2" value="62">
+          </div>
+          <div class="field">
+            <label for="cap-outline">Outline <span class="val" id="cap-outline-val">0.5</span></label>
+            <input type="range" id="cap-outline" min="0" max="4" step="0.1" value="0.5">
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="cap-shadow">Shadow offset <span class="val" id="cap-shadow-val">3</span></label>
+            <input type="range" id="cap-shadow" min="0" max="12" step="0.5" value="3">
+          </div>
+          <div class="field">
+            <label for="cap-vertical">Vertical position</label>
+            <select id="cap-vertical">
+              <option value="bottom" selected>Bottom</option>
+              <option value="middle">Middle</option>
+              <option value="top">Top</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="cap-color">Text colour</label>
+            <input type="color" id="cap-color" value="#FFFFFF">
+          </div>
+          <div class="field">
+            <label for="cap-marginv">Bottom margin <span class="val" id="cap-marginv-val">90</span></label>
+            <input type="range" id="cap-marginv" min="20" max="350" step="5" value="90">
+          </div>
+        </div>
+
+        <label class="switch">
+          <input type="checkbox" id="cap-upper" checked>
+          <span>Uppercase captions</span>
+        </label>
+
+        <details class="sub">
+          <summary>Font files</summary>
+          <p class="hint">Indivisible and Rubik are not redistributed with this app. Upload the <code>.ttf</code>/<code>.otf</code> you own.</p>
+          <label class="upload-btn">
+            <input type="file" id="font-input" accept=".ttf,.otf" hidden>
+            Upload font file
+          </label>
+          <ul class="font-list" id="font-list"></ul>
+        </details>
+      </section>
+
+      <!-- 5. EFFECTS -->
+      <section class="card">
+        <h2 class="card-title"><span class="step">5</span> Video effects</h2>
+
+        <div class="field">
+          <label for="fx-mode">Motion mode</label>
+          <select id="fx-mode">
+            <option value="auto" selected>Automatic (subtle, deterministic)</option>
+            <option value="manual">Manual keyframes</option>
+            <option value="none">None (locked frame)</option>
+          </select>
+        </div>
+
+        <div id="fx-auto">
+          <div class="grid-2">
+            <div class="field">
+              <label for="fx-amount">Zoom amount <span class="val" id="fx-amount-val">6%</span></label>
+              <input type="range" id="fx-amount" min="0" max="25" step="1" value="6">
+            </div>
+            <div class="field">
+              <label for="fx-cycle">Cycle seconds <span class="val" id="fx-cycle-val">8</span></label>
+              <input type="range" id="fx-cycle" min="3" max="20" step="1" value="8">
+            </div>
+          </div>
+          <p class="hint">The same clip always produces the same motion. Nothing is randomised.</p>
+        </div>
+
+        <div id="fx-manual" class="hidden">
+          <div class="keyframes" id="keyframes"></div>
+          <button type="button" class="ghost-btn" id="fx-add">Add segment</button>
+        </div>
+
+        <h3 class="sub-title">Silence removal</h3>
+        <label class="switch">
+          <input type="checkbox" id="sil-enabled" checked>
+          <span>Cut dead air</span>
+        </label>
+        <div class="grid-2">
+          <div class="field">
+            <label for="sil-threshold">Threshold dB <span class="val" id="sil-threshold-val">-34</span></label>
+            <input type="range" id="sil-threshold" min="-60" max="-15" step="1" value="-34">
+          </div>
+          <div class="field">
+            <label for="sil-min">Min silence <span class="val" id="sil-min-val">0.45s</span></label>
+            <input type="range" id="sil-min" min="0.2" max="2" step="0.05" value="0.45">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="sil-before">Pad before <span class="val" id="sil-before-val">0.10s</span></label>
+            <input type="range" id="sil-before" min="0" max="0.5" step="0.05" value="0.10">
+          </div>
+          <div class="field">
+            <label for="sil-after">Pad after <span class="val" id="sil-after-val">0.15s</span></label>
+            <input type="range" id="sil-after" min="0" max="0.5" step="0.05" value="0.15">
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. OUTPUT -->
+      <section class="card">
+        <h2 class="card-title"><span class="step">6</span> Output &amp; viewport</h2>
+
+        <div class="field">
+          <label>Output preset</label>
+          <div class="segmented" id="output-presets"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="vp-size">Square size <span class="val" id="vp-size-val">1000</span></label>
+            <input type="range" id="vp-size" min="400" max="1080" step="20" value="1000">
+          </div>
+          <div class="field">
+            <label for="vp-y">Square top Y <span class="val" id="vp-y-val">620</span></label>
+            <input type="range" id="vp-y" min="0" max="920" step="10" value="620">
+          </div>
+        </div>
+        <p class="hint">The square never moves or scales during the render — only the video behind it does.</p>
+
+        <h3 class="sub-title">Presets</h3>
+        <div class="preset-row">
+          <select id="preset-select"></select>
+          <button type="button" class="ghost-btn" id="preset-load">Load</button>
+        </div>
+        <div class="preset-row">
+          <input type="text" id="preset-name" placeholder="New preset name">
+          <button type="button" class="ghost-btn" id="preset-save">Save</button>
+        </div>
+      </section>
+
+      <!-- 8. STATUS -->
+      <section class="card hidden" id="status-card">
+        <h2 class="card-title">Processing</h2>
+        <div class="progress"><div class="progress-bar" id="job-bar"></div></div>
+        <div class="stage-line">
+          <span id="job-stage">Queued</span>
+          <span id="job-percent">0%</span>
+        </div>
+        <ol class="stages" id="stage-list"></ol>
+        <button type="button" class="ghost-btn danger" id="job-cancel">Cancel render</button>
+      </section>
+
+      <!-- 9. RESULT -->
+      <section class="card hidden" id="result-card">
+        <h2 class="card-title">Result</h2>
+        <video id="result-video" controls playsinline preload="metadata"></video>
+        <div class="meta-panel" id="result-meta"></div>
+        <div class="warnings hidden" id="result-warnings"></div>
+        <a class="primary-btn" id="download-link" download>Download MP4</a>
+      </section>
+
+    </div>
+
+    <!-- ============ PREVIEW ============ -->
+    <aside class="preview-col" id="preview-col">
+      <div class="preview-sticky">
+        <div class="preview-label">Composition preview · 1080×1920</div>
+        <div class="canvas9x16" id="canvas">
+          <div class="pv-hook" id="pv-hook"></div>
+          <div class="pv-square" id="pv-square">
+            <div class="pv-video" id="pv-video"></div>
+            <div class="pv-caption" id="pv-caption">CAPTION TEXT</div>
+          </div>
+        </div>
+        <p class="hint center">Layout preview only. The rendered MP4 is authoritative.</p>
+      </div>
+    </aside>
+
+  </div>
+</main>
+
+<div class="generate-bar">
+  <div class="generate-inner">
+    <div class="generate-msg" id="generate-msg">Upload a video to begin.</div>
+    <button type="button" class="primary-btn" id="generate" disabled>Generate video</button>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
