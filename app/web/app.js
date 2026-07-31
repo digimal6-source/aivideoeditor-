@@ -453,8 +453,11 @@
    * The file is sent in pieces rather than as one large POST. A single
    * multi-hundred-megabyte request does not survive the GitHub Codespaces
    * port-forwarding proxy, and it does not survive a phone switching between
-   * wifi and mobile data either. Small pieces also mean a failure costs one
-   * chunk instead of the entire upload.
+   * wifi and mobile data either.
+   *
+   * Several pieces are in flight at once. Sending them one after another
+   * leaves the uplink idle for a full round trip between every chunk, which on
+   * a mobile connection is most of the elapsed time.
    * ------------------------------------------------------------------ */
 
   const CHUNK_ATTEMPTS = 4;
@@ -483,19 +486,63 @@
       });
       uploadId = session.uploadId;
       state.upload = uploadId;
+
       const chunkSize = session.chunkSize || 8 * 1024 * 1024;
+      const offsets = [];
+      for (let o = 0; o < file.size; o += chunkSize) offsets.push(o);
 
-      let offset = 0;
-      while (offset < file.size) {
-        const end = Math.min(offset + chunkSize, file.size);
-        await sendChunk(uploadId, file.slice(offset, end), offset);
-        offset = end;
+      const concurrency = Math.max(
+        1, Math.min(session.concurrency || 4, offsets.length || 1));
 
-        const percent = (offset / file.size) * 100;
+      let uploaded = 0;
+      let nextIndex = 0;
+      let aborted = false;
+
+      // Throughput over a rolling window, so one slow chunk does not make the
+      // estimate lurch around.
+      const samples = [{ at: Date.now(), bytes: 0 }];
+
+      const showProgress = () => {
+        const now = Date.now();
+        samples.push({ at: now, bytes: uploaded });
+        while (samples.length > 2 && now - samples[0].at > 15000) samples.shift();
+
+        const first = samples[0];
+        const seconds = (now - first.at) / 1000;
+        const rate = seconds > 0.5 ? (uploaded - first.bytes) / seconds : 0;
+        const percent = (uploaded / file.size) * 100;
+
         $("upload-bar").style.width = `${percent.toFixed(1)}%`;
-        $("upload-label").textContent =
-          `Uploading · ${percent.toFixed(0)}% (${bytes(offset)} of ${bytes(file.size)})`;
-      }
+
+        let label = `Uploading · ${percent.toFixed(0)}% (${bytes(uploaded)} of ${bytes(file.size)})`;
+        if (rate > 0) {
+          const eta = (file.size - uploaded) / rate;
+          label += ` · ${bytes(rate)}/s · ${clock(eta)} left`;
+        }
+        $("upload-label").textContent = label;
+      };
+
+      const worker = async () => {
+        while (!aborted) {
+          const index = nextIndex;
+          nextIndex += 1;
+          if (index >= offsets.length) return;
+
+          const offset = offsets[index];
+          const end = Math.min(offset + chunkSize, file.size);
+          try {
+            await sendChunk(uploadId, file.slice(offset, end), offset);
+          } catch (err) {
+            aborted = true; // stop the other workers promptly
+            throw err;
+          }
+          uploaded += end - offset;
+          showProgress();
+        }
+      };
+
+      showProgress();
+      await Promise.all(Array.from({ length: concurrency }, worker));
 
       $("upload-label").textContent = "Analyzing video…";
       const data = await postJSON(`/api/uploads/${uploadId}/finish`, {});
@@ -530,8 +577,6 @@
 
         const giveUpOrRetry = (message) => {
           if (attempt < CHUNK_ATTEMPTS) {
-            $("upload-label").textContent =
-              `Connection problem — retrying (${attempt}/${CHUNK_ATTEMPTS - 1})…`;
             sleep(700 * attempt).then(attemptSend);
           } else {
             reject(new Error(message));
