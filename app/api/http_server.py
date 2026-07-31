@@ -34,14 +34,14 @@ _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 #
 # A single multi-hundred-megabyte POST does not survive the GitHub Codespaces
 # port-forwarding proxy, and it does not survive a phone changing networks
-# either. The browser therefore appends the file in pieces this size. 8 MiB is
+# either. The browser therefore sends the file in pieces this size. 8 MiB is
 # comfortably under any proxy body limit while keeping the request count low.
 #
-# Chunks are uploaded several at a time. On a mobile link the round trip
-# between requests dominates, so sending them one after another leaves the
-# uplink idle most of the time.
+# Several chunks are uploaded at once. The tunnel is latency-bound rather than
+# bandwidth-bound at this size, so sending them one after another leaves the
+# uplink idle for a full round trip between every chunk.
 _UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
-_UPLOAD_CONCURRENCY = 4
+_UPLOAD_CONCURRENCY = 6
 _MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _READ_BLOCK = 256 * 1024
 
@@ -215,8 +215,10 @@ class Handler(BaseHTTPRequestHandler):
     # Three calls: open a session, write pieces at explicit byte offsets, then
     # finish. Because every chunk carries its own offset and each request uses
     # its own file handle, chunks may arrive concurrently and out of order, and
-    # a retried chunk simply rewrites the same region. The assembled file goes
-    # through exactly the same create_source path as a one-shot upload.
+    # a retried chunk simply rewrites the same region.
+    #
+    # The file is assembled inside the upload directory so that finishing is a
+    # rename rather than a copy of the whole video.
 
     def _chunk_dir(self) -> Path:
         directory = self.settings.upload_dir / "_chunks"
@@ -333,9 +335,10 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         try:
-            with open(path, "rb") as handle:
-                result = self.service.create_source(handle, record["filename"])
+            # Moves the assembled file into place rather than copying it.
+            result = self.service.create_source_from_path(path, record["filename"])
         finally:
+            # unlink is missing_ok, so this is a no-op once the file has moved.
             self._discard_upload(upload_id)
 
         log.info("Upload %s assembled: %s bytes", upload_id, actual)
