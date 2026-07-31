@@ -35,9 +35,13 @@ _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 # A single multi-hundred-megabyte POST does not survive the GitHub Codespaces
 # port-forwarding proxy, and it does not survive a phone changing networks
 # either. The browser therefore appends the file in pieces this size. 8 MiB is
-# comfortably under any proxy body limit while still keeping the request count
-# low for a large video.
+# comfortably under any proxy body limit while keeping the request count low.
+#
+# Chunks are uploaded several at a time. On a mobile link the round trip
+# between requests dominates, so sending them one after another leaves the
+# uplink idle most of the time.
 _UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+_UPLOAD_CONCURRENCY = 4
 _MAX_CHUNK_BYTES = 32 * 1024 * 1024
 _READ_BLOCK = 256 * 1024
 
@@ -208,9 +212,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- chunked upload ---------------------------------------------------
     #
-    # Three calls: open a session, append pieces, then finish. The assembled
-    # file goes through exactly the same create_source path as a one-shot
-    # upload, so probing, validation and storage behaviour are unchanged.
+    # Three calls: open a session, write pieces at explicit byte offsets, then
+    # finish. Because every chunk carries its own offset and each request uses
+    # its own file handle, chunks may arrive concurrently and out of order, and
+    # a retried chunk simply rewrites the same region. The assembled file goes
+    # through exactly the same create_source path as a one-shot upload.
 
     def _chunk_dir(self) -> Path:
         directory = self.settings.upload_dir / "_chunks"
@@ -247,12 +253,19 @@ class Handler(BaseHTTPRequestHandler):
             _UPLOADS[upload_id] = {
                 "path": path,
                 "filename": filename,
-                "received": 0,
                 "declared": declared,
+                "parts": {},
+                "lock": threading.Lock(),
             }
         log.info("Upload %s started: %s (%s bytes declared)", upload_id, filename, declared)
         self._send_json(
-            {"uploadId": upload_id, "chunkSize": _UPLOAD_CHUNK_BYTES, "received": 0}, 201
+            {
+                "uploadId": upload_id,
+                "chunkSize": _UPLOAD_CHUNK_BYTES,
+                "concurrency": _UPLOAD_CONCURRENCY,
+                "received": 0,
+            },
+            201,
         )
 
     def api_upload_chunk(self, upload_id: str) -> None:
@@ -265,48 +278,40 @@ class Handler(BaseHTTPRequestHandler):
         if length > _MAX_CHUNK_BYTES:
             raise PayloadTooLargeError("That chunk was larger than the server accepts.")
 
-        # The client states where this chunk belongs. A retry after a partial
-        # write therefore rewinds to a known-good boundary rather than
-        # appending the same bytes twice.
-        raw_offset = self.headers.get("X-Upload-Offset")
-        offset = record["received"] if raw_offset is None else int(raw_offset)
-        if offset > record["received"]:
-            raise ValidationError(
-                "That chunk arrived out of order. Please upload the file again."
-            )
-        if offset < record["received"]:
-            with open(path, "r+b") as handle:
-                handle.truncate(offset)
-            record["received"] = offset
-
+        try:
+            offset = int(self.headers.get("X-Upload-Offset") or 0)
+        except (TypeError, ValueError):
+            raise ValidationError("That chunk did not say where it belongs.") from None
+        if offset < 0:
+            raise ValidationError("That chunk had an invalid offset.")
         if offset + length > self.settings.max_upload_bytes:
             raise PayloadTooLargeError(
                 "That video is larger than the configured upload limit."
             )
 
+        # Each request gets its own handle, so concurrent writes to distinct
+        # regions do not share a file position. Writing past the current end of
+        # file simply leaves a sparse hole that a later chunk fills in.
         remaining = length
-        try:
-            with open(path, "ab") as handle:
-                while remaining > 0:
-                    block = self.rfile.read(min(_READ_BLOCK, remaining))
-                    if not block:
-                        break
-                    handle.write(block)
-                    remaining -= len(block)
-            if remaining:
-                raise ValidationError("That chunk arrived incomplete and will be retried.")
-        except Exception:
-            # Roll back to the last complete boundary so a retry is clean.
-            try:
-                with open(path, "r+b") as handle:
-                    handle.truncate(offset)
-            except OSError:
-                pass
-            record["received"] = offset
-            raise
+        with open(path, "r+b") as handle:
+            handle.seek(offset)
+            while remaining > 0:
+                block = self.rfile.read(min(_READ_BLOCK, remaining))
+                if not block:
+                    break
+                handle.write(block)
+                remaining -= len(block)
 
-        record["received"] = offset + length
-        self._send_json({"received": record["received"]})
+        if remaining:
+            # Do not record the chunk; the client retries it at the same offset
+            # and overwrites whatever partial bytes landed.
+            raise ValidationError("That chunk arrived incomplete and will be retried.")
+
+        with record["lock"]:
+            record["parts"][offset] = length
+            received = sum(record["parts"].values())
+
+        self._send_json({"received": received})
 
     def api_upload_finish(self, upload_id: str) -> None:
         record = self._lookup_upload(upload_id)
@@ -317,12 +322,14 @@ class Handler(BaseHTTPRequestHandler):
             raise ValidationError("No data was received for that upload.")
 
         declared = record.get("declared") or 0
+        with record["lock"]:
+            received = sum(record["parts"].values())
         actual = path.stat().st_size
-        if declared and actual != declared:
+
+        if declared and (received != declared or actual != declared):
             self._discard_upload(upload_id)
             raise ValidationError(
-                "The upload finished with a different size than expected. "
-                "Please try again."
+                "The upload did not arrive completely. Please try again."
             )
 
         try:
