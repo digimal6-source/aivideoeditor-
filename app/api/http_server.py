@@ -21,7 +21,7 @@ from urllib.parse import unquote, urlparse
 
 from ..errors import AppError, NotFoundError, PayloadTooLargeError, ValidationError
 from ..settings import Settings
-from ..storage import iter_file
+from ..storage import iter_file, new_id, sanitize_filename
 from . import multipart
 from .service import AppService
 
@@ -29,6 +29,20 @@ log = logging.getLogger(__name__)
 
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
+
+# Chunked upload tuning.
+#
+# A single multi-hundred-megabyte POST does not survive the GitHub Codespaces
+# port-forwarding proxy, and it does not survive a phone changing networks
+# either. The browser therefore appends the file in pieces this size. 8 MiB is
+# comfortably under any proxy body limit while still keeping the request count
+# low for a large video.
+_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+_MAX_CHUNK_BYTES = 32 * 1024 * 1024
+_READ_BLOCK = 256 * 1024
+
+_UPLOADS: dict[str, dict] = {}
+_UPLOADS_LOCK = threading.Lock()
 
 Route = tuple[str, re.Pattern[str], str]
 
@@ -42,6 +56,10 @@ _ROUTES: list[Route] = [
     ("GET", re.compile(r"^/api/presets$"), "list_presets"),
     ("POST", re.compile(r"^/api/presets$"), "save_preset"),
     ("DELETE", re.compile(r"^/api/presets/(?P<preset_id>[A-Za-z0-9_-]+)$"), "delete_preset"),
+    ("POST", re.compile(r"^/api/uploads$"), "upload_init"),
+    ("POST", re.compile(r"^/api/uploads/(?P<upload_id>[A-Za-z0-9_-]+)/chunk$"), "upload_chunk"),
+    ("POST", re.compile(r"^/api/uploads/(?P<upload_id>[A-Za-z0-9_-]+)/finish$"), "upload_finish"),
+    ("DELETE", re.compile(r"^/api/uploads/(?P<upload_id>[A-Za-z0-9_-]+)$"), "upload_abort"),
     ("GET", re.compile(r"^/api/sources$"), "list_sources"),
     ("POST", re.compile(r"^/api/sources$"), "create_source"),
     ("GET", re.compile(r"^/api/sources/(?P<source_id>[A-Za-z0-9_-]+)$"), "get_source"),
@@ -72,7 +90,9 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.settings.cors_allow_origin
         if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header(
+                "Access-Control-Allow-Headers", "Content-Type, X-Upload-Offset"
+            )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 
     def _send_json(self, payload, status: int = 200) -> None:
@@ -185,6 +205,149 @@ class Handler(BaseHTTPRequestHandler):
     def api_delete_preset(self, preset_id: str) -> None:
         self.service.delete_preset(preset_id)
         self._send_json({"deleted": preset_id, "presets": self.service.list_presets()})
+
+    # -- chunked upload ---------------------------------------------------
+    #
+    # Three calls: open a session, append pieces, then finish. The assembled
+    # file goes through exactly the same create_source path as a one-shot
+    # upload, so probing, validation and storage behaviour are unchanged.
+
+    def _chunk_dir(self) -> Path:
+        directory = self.settings.upload_dir / "_chunks"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def _lookup_upload(self, upload_id: str) -> dict:
+        with _UPLOADS_LOCK:
+            record = _UPLOADS.get(upload_id)
+        if record is None:
+            raise NotFoundError(
+                "That upload session is no longer active. Please pick the file again."
+            )
+        return record
+
+    def api_upload_init(self) -> None:
+        payload = self._read_json()
+        filename = sanitize_filename(str(payload.get("filename") or "video.mp4"))
+        try:
+            declared = int(payload.get("size") or 0)
+        except (TypeError, ValueError):
+            declared = 0
+
+        if declared > self.settings.max_upload_bytes:
+            raise PayloadTooLargeError(
+                "That video is larger than the configured upload limit. "
+                "Raise MAX_UPLOAD_BYTES in .env if you need bigger files."
+            )
+
+        upload_id = new_id("up-")
+        path = self._chunk_dir() / f"{upload_id}.part"
+        path.write_bytes(b"")
+        with _UPLOADS_LOCK:
+            _UPLOADS[upload_id] = {
+                "path": path,
+                "filename": filename,
+                "received": 0,
+                "declared": declared,
+            }
+        log.info("Upload %s started: %s (%s bytes declared)", upload_id, filename, declared)
+        self._send_json(
+            {"uploadId": upload_id, "chunkSize": _UPLOAD_CHUNK_BYTES, "received": 0}, 201
+        )
+
+    def api_upload_chunk(self, upload_id: str) -> None:
+        record = self._lookup_upload(upload_id)
+        path: Path = record["path"]
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            raise ValidationError("That chunk was empty.")
+        if length > _MAX_CHUNK_BYTES:
+            raise PayloadTooLargeError("That chunk was larger than the server accepts.")
+
+        # The client states where this chunk belongs. A retry after a partial
+        # write therefore rewinds to a known-good boundary rather than
+        # appending the same bytes twice.
+        raw_offset = self.headers.get("X-Upload-Offset")
+        offset = record["received"] if raw_offset is None else int(raw_offset)
+        if offset > record["received"]:
+            raise ValidationError(
+                "That chunk arrived out of order. Please upload the file again."
+            )
+        if offset < record["received"]:
+            with open(path, "r+b") as handle:
+                handle.truncate(offset)
+            record["received"] = offset
+
+        if offset + length > self.settings.max_upload_bytes:
+            raise PayloadTooLargeError(
+                "That video is larger than the configured upload limit."
+            )
+
+        remaining = length
+        try:
+            with open(path, "ab") as handle:
+                while remaining > 0:
+                    block = self.rfile.read(min(_READ_BLOCK, remaining))
+                    if not block:
+                        break
+                    handle.write(block)
+                    remaining -= len(block)
+            if remaining:
+                raise ValidationError("That chunk arrived incomplete and will be retried.")
+        except Exception:
+            # Roll back to the last complete boundary so a retry is clean.
+            try:
+                with open(path, "r+b") as handle:
+                    handle.truncate(offset)
+            except OSError:
+                pass
+            record["received"] = offset
+            raise
+
+        record["received"] = offset + length
+        self._send_json({"received": record["received"]})
+
+    def api_upload_finish(self, upload_id: str) -> None:
+        record = self._lookup_upload(upload_id)
+        path: Path = record["path"]
+
+        if not path.is_file() or path.stat().st_size == 0:
+            self._discard_upload(upload_id)
+            raise ValidationError("No data was received for that upload.")
+
+        declared = record.get("declared") or 0
+        actual = path.stat().st_size
+        if declared and actual != declared:
+            self._discard_upload(upload_id)
+            raise ValidationError(
+                "The upload finished with a different size than expected. "
+                "Please try again."
+            )
+
+        try:
+            with open(path, "rb") as handle:
+                result = self.service.create_source(handle, record["filename"])
+        finally:
+            self._discard_upload(upload_id)
+
+        log.info("Upload %s assembled: %s bytes", upload_id, actual)
+        self._send_json(result, 201)
+
+    def api_upload_abort(self, upload_id: str) -> None:
+        self._discard_upload(upload_id)
+        self._send_json({"aborted": upload_id})
+
+    def _discard_upload(self, upload_id: str) -> None:
+        with _UPLOADS_LOCK:
+            record = _UPLOADS.pop(upload_id, None)
+        if record:
+            try:
+                record["path"].unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    # -- sources ----------------------------------------------------------
 
     def api_list_sources(self) -> None:
         self._send_json({"sources": self.service.list_sources()})
