@@ -1,12 +1,22 @@
 {
   "name": "Shortform Clipper",
   "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": false,
-      "upgradePackages": true
-    }
-  },
+
+  // No "features" block on purpose.
+  //
+  // The devcontainers/python base image already bundles common-utils (git,
+  // sudo, a non-root user, shell setup). Requesting the feature again only
+  // re-ran "apt-get upgrade", which fails on this image because it ships an
+  // APT source for Yarn whose signing key has expired:
+  //
+  //     NO_PUBKEY 62D54FD4003F6525
+  //     The repository 'https://dl.yarnpkg.com/debian stable InRelease'
+  //     is not signed.
+  //
+  // That failure aborted the container build and pushed the Codespace into
+  // recovery mode. This project needs no Node tooling at all, so the fix is
+  // simply not to install the feature.
+
   "onCreateCommand": "bash .devcontainer/setup.sh",
   "postStartCommand": "echo 'Ready. Run: ./scripts/dev.sh'",
   "forwardPorts": [8000],

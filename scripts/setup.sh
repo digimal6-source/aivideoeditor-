@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-time setup for Clipforge.
+# One-time setup for Shortform Clipper.
 #
 # Safe to run more than once. It never fails the whole script just because an
 # optional extra (faster-whisper) could not be installed.
 
-set -euo pipefail
+set -uo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -20,11 +20,16 @@ if command -v ffmpeg >/dev/null 2>&1; then
 else
   warn "FFmpeg is not installed. Trying to install it..."
   if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+    # Drop the base image's expired Yarn APT source first, otherwise
+    # 'apt-get update' fails with NO_PUBKEY 62D54FD4003F6525.
+    sudo rm -f /etc/apt/sources.list.d/yarn.list \
+               /etc/apt/sources.list.d/yarn.sources 2>/dev/null || true
+    sudo apt-get update -qq || warn "apt-get update reported errors; continuing anyway"
+    sudo apt-get install -y -qq ffmpeg || true
   elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y ffmpeg
+    sudo dnf install -y ffmpeg || true
   elif command -v brew >/dev/null 2>&1; then
-    brew install ffmpeg
+    brew install ffmpeg || true
   fi
   if command -v ffmpeg >/dev/null 2>&1; then
     ok "FFmpeg installed"
