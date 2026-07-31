@@ -29,7 +29,7 @@ from ..processor.probe import probe
 from ..processor.render import RenderPipeline
 from ..processor.transcribe import describe_backends
 from ..settings import Settings
-from ..storage import LocalStorage, file_extension
+from ..storage import LocalStorage, SourceAsset, file_extension
 from .jobs import JobManager
 
 log = logging.getLogger(__name__)
@@ -91,17 +91,17 @@ class AppService:
 
     # -- sources ---------------------------------------------------------
 
-    def create_source(
-        self, stream: BinaryIO, filename: str, declared_size: int | None = None
-    ) -> dict:
+    def _require_video_extension(self, filename: str) -> str:
         extension = file_extension(filename)
         if extension not in self.settings.allowed_video_extensions:
             allowed = ", ".join(sorted(self.settings.allowed_video_extensions))
             raise UnsupportedMediaError(
                 f"'{extension or filename}' is not a supported video format. Use one of: {allowed}"
             )
+        return extension
 
-        asset = self.storage.save_source(stream, filename, declared_size)
+    def _finish_source(self, asset: SourceAsset) -> dict:
+        """Probe a freshly stored video and record its metadata."""
         try:
             info = probe(self.ffmpeg, self.storage.source_path(asset.id))
         except Exception:
@@ -112,6 +112,24 @@ class AppService:
         asset.media = info.to_dict()
         self.storage.write_source(asset)
         return {"source": asset.to_dict(), "media": info.to_dict()}
+
+    def create_source(
+        self, stream: BinaryIO, filename: str, declared_size: int | None = None
+    ) -> dict:
+        """Store a video arriving as a stream (one-shot multipart upload)."""
+        self._require_video_extension(filename)
+        asset = self.storage.save_source(stream, filename, declared_size)
+        return self._finish_source(asset)
+
+    def create_source_from_path(self, path: Path, filename: str) -> dict:
+        """Store a video that is already on disk (chunked upload).
+
+        The file is moved rather than copied, so finishing a large upload costs
+        a rename instead of rewriting hundreds of megabytes.
+        """
+        self._require_video_extension(filename)
+        asset = self.storage.adopt_source(path, filename)
+        return self._finish_source(asset)
 
     def get_source(self, source_id: str) -> dict:
         return self.storage.load_source(source_id).to_dict()

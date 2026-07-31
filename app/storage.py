@@ -94,6 +94,7 @@ class SourceAsset:
 
 class StorageBackend(Protocol):
     def save_source(self, stream: BinaryIO, filename: str, declared_size: int | None) -> SourceAsset: ...
+    def adopt_source(self, path: Path, filename: str) -> SourceAsset: ...
     def source_path(self, source_id: str) -> Path: ...
     def load_source(self, source_id: str) -> SourceAsset: ...
     def job_workspace(self, job_id: str) -> Path: ...
@@ -110,17 +111,26 @@ class LocalStorage:
 
     # -- sources ---------------------------------------------------------
 
-    def save_source(
-        self, stream: BinaryIO, filename: str, declared_size: int | None = None
-    ) -> SourceAsset:
-        """Stream an upload to disk in 1 MiB chunks (never buffered in RAM)."""
-        safe_name = sanitize_filename(filename, default="video.mp4")
+    def _check_extension(self, safe_name: str) -> str:
         ext = Path(safe_name).suffix.lower()
         if ext not in self.settings.allowed_video_extensions:
             raise UnsupportedMediaError(
                 f"'{ext or safe_name}' is not a supported video format. "
                 f"Allowed: {', '.join(sorted(self.settings.allowed_video_extensions))}."
             )
+        return ext
+
+    def save_source(
+        self, stream: BinaryIO, filename: str, declared_size: int | None = None
+    ) -> SourceAsset:
+        """Stream an upload to disk in 1 MiB chunks (never buffered in RAM).
+
+        Used by the one-shot multipart endpoint, where the bytes arrive on the
+        socket and there is nothing on disk yet. The chunked upload path uses
+        :meth:`adopt_source` instead, which avoids copying the file.
+        """
+        safe_name = sanitize_filename(filename, default="video.mp4")
+        ext = self._check_extension(safe_name)
         limit = self.settings.max_upload_bytes
         if declared_size is not None and declared_size > limit:
             raise PayloadTooLargeError(
@@ -153,6 +163,45 @@ class LocalStorage:
 
         asset = SourceAsset(
             id=source_id, original_name=safe_name, extension=ext, size_bytes=written
+        )
+        self.write_source(asset)
+        return asset
+
+    def adopt_source(self, path: Path, filename: str) -> SourceAsset:
+        """Take ownership of a file that is already on disk, by moving it.
+
+        The chunked upload assembles the video inside the upload directory, so
+        reading it back out and writing it to a second file would copy every
+        byte for no reason - minutes of pointless disk I/O on a large video,
+        all of it after the progress bar has already hit 100%. A rename is
+        effectively instantaneous.
+
+        ``os.replace`` requires both paths to be on one filesystem, which is
+        true by construction here; the fallback covers an operator pointing the
+        directories at different mounts.
+        """
+        safe_name = sanitize_filename(filename, default="video.mp4")
+        ext = self._check_extension(safe_name)
+
+        size = path.stat().st_size
+        if size == 0:
+            raise ValidationError("The uploaded file was empty.")
+        limit = self.settings.max_upload_bytes
+        if size > limit:
+            raise PayloadTooLargeError(
+                f"That file is {size / 1e9:.2f} GB, which exceeds the "
+                f"{limit / 1e9:.2f} GB upload limit."
+            )
+
+        source_id = new_id("src_").replace("_", "-")
+        target = self.settings.upload_dir / f"{source_id}{ext}"
+        try:
+            os.replace(path, target)
+        except OSError:
+            shutil.move(str(path), str(target))
+
+        asset = SourceAsset(
+            id=source_id, original_name=safe_name, extension=ext, size_bytes=size
         )
         self.write_source(asset)
         return asset
