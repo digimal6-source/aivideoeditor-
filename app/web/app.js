@@ -25,6 +25,7 @@
     job: null,
     poll: null,
     loadedFonts: new Set(),
+    upload: null,
   };
 
   const STAGES = [
@@ -50,7 +51,7 @@
     el.classList.toggle("error", !!isError);
     el.classList.remove("hidden");
     clearTimeout(el._timer);
-    el._timer = setTimeout(() => el.classList.add("hidden"), isError ? 7000 : 3500);
+    el._timer = setTimeout(() => el.classList.add("hidden"), isError ? 9000 : 3500);
   }
 
   function bytes(n) {
@@ -72,6 +73,8 @@
     return `${h ? h + ":" : ""}${mm}:${String(s).padStart(2, "0")}`;
   }
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   async function request(path, options) {
     const response = await fetch(api(path), options);
     const text = await response.text();
@@ -80,7 +83,7 @@
       try { data = JSON.parse(text); } catch (_) { data = {}; }
     }
     if (!response.ok) {
-      throw new Error((data && data.message) || `Request failed (${response.status})`);
+      throw new Error((data && data.message) || `Request failed (HTTP ${response.status})`);
     }
     return data;
   }
@@ -446,10 +449,20 @@
 
   /* ------------------------------------------------------------------ *
    * upload
+   *
+   * The file is sent in pieces rather than as one large POST. A single
+   * multi-hundred-megabyte request does not survive the GitHub Codespaces
+   * port-forwarding proxy, and it does not survive a phone switching between
+   * wifi and mobile data either. Small pieces also mean a failure costs one
+   * chunk instead of the entire upload.
    * ------------------------------------------------------------------ */
 
-  function uploadVideo(file) {
+  const CHUNK_ATTEMPTS = 4;
+  const CHUNK_TIMEOUT_MS = 120000;
+
+  async function uploadVideo(file) {
     if (!file) return;
+
     const limit = state.config.limits.maxUploadBytes;
     if (file.size > limit) {
       toast(`That file is ${bytes(file.size)}; the limit is ${bytes(limit)}.`, true);
@@ -459,47 +472,108 @@
     $("dropzone-hint").textContent = `${file.name} · ${bytes(file.size)}`;
     $("upload-progress-wrap").classList.remove("hidden");
     $("upload-bar").style.width = "0%";
-    $("upload-label").textContent = "Uploading…";
+    $("upload-label").textContent = "Preparing…";
     $("generate").disabled = true;
 
-    const form = new FormData();
-    form.append("file", file, file.name);
+    let uploadId = null;
+    try {
+      const session = await postJSON("/api/uploads", {
+        filename: file.name,
+        size: file.size,
+      });
+      uploadId = session.uploadId;
+      state.upload = uploadId;
+      const chunkSize = session.chunkSize || 8 * 1024 * 1024;
 
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", api("/api/sources"));
+      let offset = 0;
+      while (offset < file.size) {
+        const end = Math.min(offset + chunkSize, file.size);
+        await sendChunk(uploadId, file.slice(offset, end), offset);
+        offset = end;
 
-    xhr.upload.addEventListener("progress", (event) => {
-      if (!event.lengthComputable) return;
-      const percent = (event.loaded / event.total) * 100;
-      $("upload-bar").style.width = `${percent.toFixed(1)}%`;
-      $("upload-label").textContent =
-        percent >= 99.5 ? "Analyzing video…" : `Uploading · ${percent.toFixed(0)}%`;
-    });
-
-    xhr.addEventListener("load", () => {
-      let data = {};
-      try { data = JSON.parse(xhr.responseText || "{}"); } catch (_) { /* ignore */ }
-      if (xhr.status >= 400) {
-        $("upload-progress-wrap").classList.add("hidden");
-        toast(data.message || "That upload failed.", true);
-        return;
+        const percent = (offset / file.size) * 100;
+        $("upload-bar").style.width = `${percent.toFixed(1)}%`;
+        $("upload-label").textContent =
+          `Uploading · ${percent.toFixed(0)}% (${bytes(offset)} of ${bytes(file.size)})`;
       }
+
+      $("upload-label").textContent = "Analyzing video…";
+      const data = await postJSON(`/api/uploads/${uploadId}/finish`, {});
+      state.upload = null;
+
       $("upload-label").textContent = "Ready";
       state.source = data.source;
       state.media = data.media;
       showMeta(data.source, data.media);
       $("generate").disabled = false;
       $("generate-msg").textContent = "Ready to render.";
-      const end = Math.min(data.media.duration, 30);
-      $("clip-end").value = clock(end);
-    });
-
-    xhr.addEventListener("error", () => {
+      $("clip-end").value = clock(Math.min(data.media.duration, 30));
+    } catch (err) {
       $("upload-progress-wrap").classList.add("hidden");
-      toast("The upload could not reach the server.", true);
-    });
+      $("upload-label").textContent = "";
+      state.upload = null;
+      if (uploadId) {
+        // Do not leave a half-written .part file on the server.
+        request(`/api/uploads/${uploadId}`, { method: "DELETE" }).catch(() => {});
+      }
+      toast(err.message || "That upload failed.", true);
+    }
+  }
 
-    xhr.send(form);
+  /* Send one chunk, retrying transient failures at the same byte offset. */
+  function sendChunk(uploadId, blob, offset) {
+    return new Promise((resolve, reject) => {
+      let attempt = 0;
+
+      const attemptSend = () => {
+        attempt += 1;
+
+        const giveUpOrRetry = (message) => {
+          if (attempt < CHUNK_ATTEMPTS) {
+            $("upload-label").textContent =
+              `Connection problem — retrying (${attempt}/${CHUNK_ATTEMPTS - 1})…`;
+            sleep(700 * attempt).then(attemptSend);
+          } else {
+            reject(new Error(message));
+          }
+        };
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", api(`/api/uploads/${uploadId}/chunk`));
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.setRequestHeader("X-Upload-Offset", String(offset));
+        xhr.timeout = CHUNK_TIMEOUT_MS;
+
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+            return;
+          }
+          // Surface the status code: when a proxy rejects the request the body
+          // is an HTML error page, not our JSON envelope.
+          let message = `Upload failed (HTTP ${xhr.status})`;
+          try {
+            const parsed = JSON.parse(xhr.responseText || "{}");
+            if (parsed && parsed.message) message = parsed.message;
+          } catch (_) { /* not our JSON envelope */ }
+
+          if (xhr.status >= 500 || xhr.status === 408 || xhr.status === 429) {
+            giveUpOrRetry(message);
+          } else {
+            reject(new Error(message));
+          }
+        });
+
+        xhr.addEventListener("error", () =>
+          giveUpOrRetry("The connection dropped during upload. Please try again."));
+        xhr.addEventListener("timeout", () =>
+          giveUpOrRetry("The upload timed out. Please try again on a stronger connection."));
+
+        xhr.send(blob);
+      };
+
+      attemptSend();
+    });
   }
 
   function showMeta(source, media) {
