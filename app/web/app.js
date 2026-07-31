@@ -218,8 +218,13 @@
     if (active) active.classList.add("on");
   }
 
+  /* ------------------------------------------------------------------ *
+   * fonts
+   * ------------------------------------------------------------------ */
+
   async function renderFonts() {
     const fonts = state.config.fonts || [];
+
     ["hook-font", "cap-font"].forEach((selectId) => {
       const select = $(selectId);
       const previous = select.value;
@@ -275,6 +280,51 @@
       renderPreview();
     } catch (_) {
       state.loadedFonts.delete(font.id);
+    }
+  }
+
+  /* Upload a font file. When `targetSelectId` is given, the newly installed
+   * font is selected for that purpose straight away, so uploading from the
+   * hook card sets the hook font without a second step. */
+  async function uploadFont(file, targetSelectId) {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file, file.name);
+    toast(`Installing ${file.name}…`);
+    try {
+      const data = await request("/api/fonts", { method: "POST", body: form });
+      state.config.fonts = data.fonts;
+      await renderFonts();
+
+      if (targetSelectId && data.font && data.font.id) {
+        $(targetSelectId).value = data.font.id;
+        await loadFontFace(data.font);
+      }
+
+      const where =
+        targetSelectId === "hook-font" ? " and set as the hook font"
+        : targetSelectId === "cap-font" ? " and set as the caption font"
+        : "";
+      toast(`${data.font.family} installed${where}.`);
+      renderPreview();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  async function deleteFont(fontId) {
+    try {
+      const data = await request(`/api/fonts/${fontId}`, { method: "DELETE" });
+      state.config.fonts = data.fonts;
+      // A select still pointing at the removed font must fall back.
+      ["hook-font", "cap-font"].forEach((id) => {
+        if ($(id).value === fontId) $(id).value = "";
+      });
+      state.loadedFonts.delete(fontId);
+      await renderFonts();
+      renderPreview();
+    } catch (err) {
+      toast(err.message, true);
     }
   }
 
@@ -631,31 +681,6 @@
     $("meta-audio").textContent = media.hasAudio ? `yes (${media.audioCodec})` : "no audio track";
   }
 
-  async function uploadFont(file) {
-    if (!file) return;
-    const form = new FormData();
-    form.append("file", file, file.name);
-    try {
-      const data = await request("/api/fonts", { method: "POST", body: form });
-      state.config.fonts = data.fonts;
-      await renderFonts();
-      toast(`${data.font.family} installed.`);
-      renderPreview();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
-  async function deleteFont(fontId) {
-    try {
-      const data = await request(`/api/fonts/${fontId}`, { method: "DELETE" });
-      state.config.fonts = data.fonts;
-      await renderFonts();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
   /* ------------------------------------------------------------------ *
    * manual keyframes
    * ------------------------------------------------------------------ */
@@ -952,7 +977,21 @@
       if (e.dataTransfer.files.length) uploadVideo(e.dataTransfer.files[0]);
     });
 
-    $("font-input").addEventListener("change", (e) => uploadFont(e.target.files[0]));
+    // Font uploads. Each picker installs the font and immediately assigns it to
+    // the purpose it was uploaded for; the shared one only installs.
+    // Clearing value afterwards lets the same file be picked twice in a row.
+    const wireFontInput = (inputId, targetSelectId) => {
+      const input = $(inputId);
+      if (!input) return;
+      input.addEventListener("change", async () => {
+        const file = input.files[0];
+        input.value = "";
+        await uploadFont(file, targetSelectId);
+      });
+    };
+    wireFontInput("hook-font-input", "hook-font");
+    wireFontInput("cap-font-input", "cap-font");
+    wireFontInput("font-input", null);
 
     $("hook-text").addEventListener("input", () => { renderWordChips(); renderPreview(); });
 

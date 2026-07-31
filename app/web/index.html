@@ -44,6 +44,8 @@
           <div class="progress-label" id="upload-label">Uploading…</div>
         </div>
 
+        <p class="hint">Trimming the video on your phone first makes uploading dramatically faster — only the part you actually need has to travel.</p>
+
         <div class="meta-panel hidden" id="meta-panel">
           <div class="meta-row"><span>File</span><b id="meta-name">–</b></div>
           <div class="meta-row"><span>Size</span><b id="meta-size">–</b></div>
@@ -96,18 +98,21 @@
           <div class="inline-error hidden" id="color-error"></div>
         </div>
 
+        <div class="field">
+          <label for="hook-font">Hook font</label>
+          <select id="hook-font"></select>
+          <label class="upload-btn">
+            <input type="file" id="hook-font-input" accept=".ttf,.otf" hidden>
+            Upload hook font
+          </label>
+          <p class="hint">Rubik Bold is not bundled with the app. Upload the <code>.ttf</code> or <code>.otf</code> you own and it becomes the hook font immediately.</p>
+        </div>
+
         <div class="grid-2">
-          <div class="field">
-            <label for="hook-font">Hook font</label>
-            <select id="hook-font"></select>
-          </div>
           <div class="field">
             <label for="hook-size">Size <span class="val" id="hook-size-val">74</span></label>
             <input type="range" id="hook-size" min="36" max="130" step="2" value="74">
           </div>
-        </div>
-
-        <div class="grid-2">
           <div class="field">
             <label for="hook-align">Alignment</label>
             <select id="hook-align">
@@ -116,10 +121,11 @@
               <option value="right">Right</option>
             </select>
           </div>
-          <div class="field">
-            <label for="hook-gap">Gap above square <span class="val" id="hook-gap-val">60</span></label>
-            <input type="range" id="hook-gap" min="0" max="260" step="5" value="60">
-          </div>
+        </div>
+
+        <div class="field">
+          <label for="hook-gap">Gap above square <span class="val" id="hook-gap-val">60</span></label>
+          <input type="range" id="hook-gap" min="0" max="260" step="5" value="60">
         </div>
 
         <label class="switch">
@@ -153,33 +159,39 @@
           <p class="hint">Timings are spread evenly across the clip by word length.</p>
         </div>
 
+        <div class="field">
+          <label for="cap-font">Caption font</label>
+          <select id="cap-font"></select>
+          <label class="upload-btn">
+            <input type="file" id="cap-font-input" accept=".ttf,.otf" hidden>
+            Upload caption font
+          </label>
+          <p class="hint">Indivisible is not bundled with the app. Upload the <code>.ttf</code> or <code>.otf</code> you own and it becomes the caption font immediately.</p>
+        </div>
+
         <div class="grid-2">
-          <div class="field">
-            <label for="cap-font">Caption font</label>
-            <select id="cap-font"></select>
-          </div>
           <div class="field">
             <label for="cap-maxwords">Max words / phrase <span class="val" id="cap-maxwords-val">3</span></label>
             <input type="range" id="cap-maxwords" min="1" max="8" step="1" value="3">
           </div>
-        </div>
-
-        <div class="grid-2">
           <div class="field">
             <label for="cap-size">Font size <span class="val" id="cap-size-val">62</span></label>
             <input type="range" id="cap-size" min="28" max="120" step="2" value="62">
           </div>
-          <div class="field">
-            <label for="cap-outline">Outline <span class="val" id="cap-outline-val">0.5</span></label>
-            <input type="range" id="cap-outline" min="0" max="4" step="0.1" value="0.5">
-          </div>
         </div>
 
         <div class="grid-2">
           <div class="field">
+            <label for="cap-outline">Outline <span class="val" id="cap-outline-val">0.5</span></label>
+            <input type="range" id="cap-outline" min="0" max="4" step="0.1" value="0.5">
+          </div>
+          <div class="field">
             <label for="cap-shadow">Shadow offset <span class="val" id="cap-shadow-val">3</span></label>
             <input type="range" id="cap-shadow" min="0" max="12" step="0.5" value="3">
           </div>
+        </div>
+
+        <div class="grid-2">
           <div class="field">
             <label for="cap-vertical">Vertical position</label>
             <select id="cap-vertical">
@@ -188,17 +200,15 @@
               <option value="top">Top</option>
             </select>
           </div>
-        </div>
-
-        <div class="grid-2">
-          <div class="field">
-            <label for="cap-color">Text colour</label>
-            <input type="color" id="cap-color" value="#FFFFFF">
-          </div>
           <div class="field">
             <label for="cap-marginv">Bottom margin <span class="val" id="cap-marginv-val">90</span></label>
             <input type="range" id="cap-marginv" min="20" max="350" step="5" value="90">
           </div>
+        </div>
+
+        <div class="field">
+          <label for="cap-color">Text colour</label>
+          <input type="color" id="cap-color" value="#FFFFFF">
         </div>
 
         <label class="switch">
@@ -207,13 +217,13 @@
         </label>
 
         <details class="sub">
-          <summary>Font files</summary>
-          <p class="hint">Indivisible and Rubik are not redistributed with this app. Upload the <code>.ttf</code>/<code>.otf</code> you own.</p>
+          <summary>Installed fonts</summary>
+          <p class="hint">Fonts you upload are shared by the hook and the captions, and stay installed between renders.</p>
+          <ul class="font-list" id="font-list"></ul>
           <label class="upload-btn">
             <input type="file" id="font-input" accept=".ttf,.otf" hidden>
-            Upload font file
+            Upload another font
           </label>
-          <ul class="font-list" id="font-list"></ul>
         </details>
       </section>
 
